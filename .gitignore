@@ -1,0 +1,29 @@
+# --- Gradle / Android ---
+*.iml
+.gradle
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+.kotlin/
+
+# --- IDE ---
+/.idea
+.DS_Store
+
+# --- Secrets & local state (never commit) ---
+*.jks
+*.keystore
+*.p12
+.env
+.dev.vars
+server/.admin_tokens
+server/sim1.db
+server/__pycache__/
+**/__pycache__/
+
+# --- Wrangler build/dev artifacts ---
+worker/dist/
+worker/.wrangler/
+.wrangler/

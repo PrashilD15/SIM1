@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- SIM card body with the classic chamfered corner -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M46,28 L70,28 A7,7 0 0 1 77,35 L77,73 A7,7 0 0 1 70,80 L38,80 A7,7 0 0 1 31,73 L31,43 Z" />
+    <!-- chip area -->
+    <path
+        android:fillColor="#1A4FD6"
+        android:pathData="M44,43 L64,43 A3,3 0 0 1 67,46 L67,62 A3,3 0 0 1 64,65 L44,65 A3,3 0 0 1 41,62 L41,46 A3,3 0 0 1 44,43 Z" />
+    <!-- chip contacts -->
+    <path android:fillColor="#FFFFFF" android:pathData="M53,43 h1.6 v22 h-1.6 z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M41,53 h26 v1.6 h-26 z" />
+</vector>

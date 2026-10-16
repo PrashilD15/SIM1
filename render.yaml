@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: sim1-c2
+    runtime: python
+    plan: free
+    rootDir: server
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server.py
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: C2_ADMIN
+        value: admin
+      - key: C2_PASS
+        sync: false
+      - key: C2_DEVICE_SECRET
+        sync: false
+      - key: C2_DB
+        value: sim1.db

