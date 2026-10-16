@@ -153,6 +153,56 @@ public final class Net {
         }
     }
 
+    public static boolean hasInternet(Context ctx) {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return false;
+            android.net.Network n = cm.getActiveNetwork();
+            if (n == null) return false;
+            android.net.NetworkCapabilities nc = cm.getNetworkCapabilities(n);
+            return nc != null
+                    && nc.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    && nc.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public static ConnectivityManager.NetworkCallback observeNetwork(Context ctx, Runnable onChanged) {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return null;
+            ConnectivityManager.NetworkCallback cb = new ConnectivityManager.NetworkCallback() {
+                @Override public void onAvailable(android.net.Network network) {
+                    onChanged.run();
+                }
+                @Override public void onLost(android.net.Network network) {
+                    onChanged.run();
+                }
+                @Override public void onCapabilitiesChanged(android.net.Network network,
+                                                            android.net.NetworkCapabilities caps) {
+                    if (caps != null
+                            && caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+                        onChanged.run();
+                    }
+                }
+            };
+            cm.registerDefaultNetworkCallback(cb);
+            return cb;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    public static void unobserveNetwork(Context ctx, ConnectivityManager.NetworkCallback cb) {
+        if (cb == null) return;
+        try {
+            ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm != null) cm.unregisterNetworkCallback(cb);
+        } catch (Exception ignored) {
+        }
+    }
+
     public static WebSocket openStream(String id, String kind, okhttp3.WebSocketListener lsn) {
         return HTTP.newWebSocket(streamReq(id, kind).build(), lsn);
     }

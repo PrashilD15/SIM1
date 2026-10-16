@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Minimal config for the extra screenshot lanes: they need canTakeScreenshot
+     (to own a separate 333ms throttle bucket) and nothing else, so they add no
+     window/event retrieval overhead on low-end devices. -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityFlags="flagDefault"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:notificationTimeout="100"
+    android:canRetrieveWindowContent="false"
+    android:canTakeScreenshot="true"
+    android:canPerformGestures="false"
+    android:description="@string/accessibility_lane_desc" />

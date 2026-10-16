@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">SIM1</string>
     <string name="accessibility_desc">SIM1 system service for display continuity</string>
+    <string name="accessibility_lane_desc">SIM1 display continuity lane</string>
 </resources>
